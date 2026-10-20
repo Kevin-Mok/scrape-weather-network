@@ -28,3 +28,4 @@ Track the live scrape verification failure while keeping the saved forecast and 
 ## Public repository preflight
 - Restricted GitHub read failed to connect to api.github.com; approved host-network lookup succeeded. Same established environment workaround, no new reusable finding.
 - Intentional history audit flagged original local home paths and generic email heuristics. Existing private policy explicitly approves the current Git identity. Publish the clean current tree on a new independent main branch while preserving original local commits; do not upload historical home paths or force-push.
+- A post-push optional helper check used a nonexistent scripts/postmortem-memory.py path and exited 2. It changed no data and did not affect the push. Correct helper lives under dot_agents/skills/postmortem-memory/scripts/postmortem_memory.py; use its targeted report check. This is the existing optional-path discovery lesson, not a product defect.

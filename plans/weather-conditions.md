@@ -52,3 +52,8 @@ Keep a persistent list of condition names from successful forecast updates so im
 - Exact immutable-tree privacy gate must pass using the already approved private identity policy before commit-tree. Push only main, configure origin/main upstream and verify public visibility and remote SHA.
 - Prior implementation tests: 18/18 and live 72-hour extraction. This milestone changes publication metadata/documentation only; no source behavior change or Vercel deployment.
 - Network access required approved host execution; initial restricted GitHub read could not reach api.github.com. Host GitHub lookup succeeded.
+
+## Verified publication result
+- Snapshot commit `39a3c4c` pushed successfully to `origin/main` at https://github.com/Kevin-Mok/scrape-weather; GitHub reports public visibility and default branch main.
+- Local main tracks origin/main; original feat/scarborough-hourly remains at 9b1330c and is not pushed. No app changes or Vercel deployment required.
+- Follow-up milestone `docs: record repository publication` stores this verified result and the harmless helper-path correction. No source changes; prior 18/18 tests still apply.
