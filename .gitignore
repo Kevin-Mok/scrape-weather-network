@@ -1,0 +1,9 @@
+node_modules/
+.worktrees/
+.env*
+!.env.example
+data/
+.lavish/
+.aws
+.agents/
+.codex/

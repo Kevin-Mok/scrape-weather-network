@@ -1,0 +1,14 @@
+[Unit]
+Description=Scrape and publish Scarborough hourly weather
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/
+EnvironmentFile=@ENV_FILE@
+Environment=@PATH@
+ExecStart=@NODE@ @CLI@
+TimeoutStartSec=300
+KillMode=control-group
+UMask=0077
