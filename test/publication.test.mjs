@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseRows } from '../src/feed.mjs';
+import { parseRows, SOURCE_URL } from '../src/feed.mjs';
 import { publishAndSave } from '../src/publication.mjs';
 import { scrape } from '../src/browser.mjs';
 const raw = JSON.parse(
@@ -81,6 +81,7 @@ test('browser closes after extraction failure and after success', async () => {
     const calls = [];
     const command = async (args) => {
       calls.push(args);
+      if (args[0] === 'eval' && args[1] === 'location.href') return SOURCE_URL;
       if (args[0] === 'eval' && args[1] === '--stdin') {
         if (fail) throw new Error('broken DOM');
         return raw;
@@ -113,7 +114,7 @@ test('navigation timeout may continue only on the exact source after row readine
       }
       if (
         args[0] === 'eval' &&
-        args[1] === 'location.origin + location.pathname'
+        args[1] === 'location.href'
       )
         return correct
           ? 'https://www.theweathernetwork.com/en/city/ca/ontario/scarborough/hourly'
@@ -180,5 +181,101 @@ test('forecast output cannot overwrite the condition catalog', async () => {
     assert.deepEqual(await readdir(dir), []);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('structured verification rejects absent metadata before returning a publishable feed', async () => {
+  const calls=[];
+  const command=async args=>{
+    calls.push(args);
+    if(args[0]==='eval' && args[1]==='location.href') return SOURCE_URL;
+    if(args[0]==='eval' && args[1]==='--stdin') return raw;
+    if(args[0]==='eval' && args[1].includes('document.scripts')) return [];
+    return null;
+  };
+  const diagnostics = {targets:[],documents:[],cookies:[]};
+  await assert.rejects(scrape({command,diagnostics,verifyStructured:true,now:new Date('2026-10-20T20:18Z')}), /structured|location/i);
+  assert.equal(diagnostics.stage,'structured-validation');
+  assert.deepEqual(calls.at(-1),['close']);
+});
+
+test('normal and timed-out navigation reject foreign URLs, query suffixes and fragments',async()=>{
+ for(const timedOut of [false,true]) for(const url of ['https://other.example/','https://www.theweathernetwork.com/en/city/ca/ontario/scarborough/hourly?_guid_iss_=1','https://www.theweathernetwork.com/en/city/ca/ontario/scarborough/hourly#other']) {
+  const command=async args=>{
+   if(args[0]==='open'&&timedOut){const e=new Error('timed out');e.code='BROWSER_TIMEOUT';throw e;}
+   if(args[0]==='eval'&&args[1].startsWith('location.'))return url;
+   if(args[0]==='eval'&&args[1]==='--stdin')return raw;
+   return null;
+  };
+  await assert.rejects(scrape({command,now:new Date('2026-10-20T20:18Z')}),/exact forecast source/);
+ }
+});
+
+function diagnosticScripts(change = () => {}) {
+  const hourly = feed().hourly.map(row => ({
+    time: {local: row.time.slice(0, 16), utc: new Date(row.time).toISOString().slice(0, 16)},
+    temperature: {value: row.temp}, feelsLike: row.feelsLike,
+    weatherCode: {text: row.condition},
+    wind: {speed: row.windSpeed, direction: row.windDirection, gust: row.windGust},
+    relativeHumidity: row.humidity, pop: row.precipProb,
+  }));
+  change(hourly);
+  const dataset = {
+    '@type': 'Dataset', name: 'Hourly Weather Forecast - Scarborough, Ontario',
+    description: 'A 72-hour weather forecast in 1-hour periods for Scarborough, Ontario',
+    mainEntity: {'csvw:tableSchema': {'csvw:columns': [
+      'time', 'condition', 'temperature', 'feelsLike', 'windSpeed', 'windDirection', 'windGust', 'humidity', 'pop',
+    ].map(name => ({'csvw:name': name, 'csvw:cells': hourly.map(row => ({'csvw:value': name === 'time' ? row.time.local : ''}))}))}},
+  };
+  const record = {
+    locationData: {placeName: 'Scarborough', provCode: 'ON', countryCode: 'CA'},
+    hourlyData: {
+      hourly, display: {unit: {temperature: 'C', wind: 'km/h', relativeHumidity: '%', pop: '%'}},
+      generatedTimestamp: {local: '2026-10-20T16:18', utc: '2026-10-20T20:18'},
+    },
+    untrusted: {token: 'private-source-value'},
+  };
+  return [
+    {type: 'application/ld+json', text: JSON.stringify(dataset)},
+    {text: `self.__next_f.push(${JSON.stringify([1, `a:${JSON.stringify(record)}\n`])})`},
+  ];
+}
+
+test('source disagreement records only the first row and field with safe coverage counts', async () => {
+  const scripts = diagnosticScripts(hourly => { hourly[0].temperature.value += 1; });
+  const diagnostics = {targets: [], documents: [], cookies: []};
+  const command = async args => {
+    if (args[0] === 'eval' && args[1] === 'location.href') return SOURCE_URL;
+    if (args[0] === 'eval' && args[1] === '--stdin') return raw;
+    if (args[0] === 'eval' && args[1].includes('document.scripts')) return scripts;
+    return null;
+  };
+  await assert.rejects(scrape({command, diagnostics, verifyStructured: true, now: new Date('2026-10-20T20:18Z')}), /forecasts disagree/);
+  assert.equal(diagnostics.stage, 'source-agreement');
+  assert.deepEqual(diagnostics.disagreement, {rowIndex: 0, field: 'temp'});
+  assert.deepEqual(diagnostics.renderedCoverage, {rowCount: 72, timeCount: 72, advertisedCount: 72});
+  assert.equal(diagnostics.sourceCoverage.hydrationCount, 72);
+  assert.equal(diagnostics.sourceCoverage.firstUtc, '2026-10-20T21:00:00.000Z');
+  assert.doesNotMatch(JSON.stringify(diagnostics), /private-source-value|untrusted|token/);
+});
+
+test('DOM evaluation and inline-script retrieval failures retain distinct safe stages', async () => {
+  for (const stage of ['dom-evaluation', 'script-retrieval']) {
+    const diagnostics = {targets: [], documents: [], cookies: []};
+    const calls = [];
+    const command = async args => {
+      calls.push(args);
+      if (args[0] === 'eval' && args[1] === 'location.href') return SOURCE_URL;
+      if (args[0] === 'eval' && args[1] === '--stdin') {
+        if (stage === 'dom-evaluation') throw new Error('private-operation-value');
+        return raw;
+      }
+      if (args[0] === 'eval' && args[1].includes('document.scripts')) throw new Error('private-operation-value');
+      return null;
+    };
+    await assert.rejects(scrape({command, diagnostics, verifyStructured: true, now: new Date('2026-10-20T20:18Z')}), /private-operation-value/);
+    assert.equal(diagnostics.stage, stage);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /private-operation-value/);
+    assert.deepEqual(calls.at(-1), ['close']);
   }
 });

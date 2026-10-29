@@ -6,13 +6,18 @@
   "scripts": {
     "test": "node --test",
     "scrape": "node src/cli.mjs",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "compare": "node scripts/compare.mjs",
+    "test:browser": "WEATHER_BROWSER_TESTS=1 node --test test/browser.test.mjs",
+    "trial": "node scripts/trial.mjs",
+    "setup:trial": "node scripts/setup-trial.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
     "@vercel/blob": "2.8.2",
-    "agent-browser": "0.27.0"
+    "agent-browser": "0.27.0",
+    "playwright-core": "1.64.1"
   }
 }

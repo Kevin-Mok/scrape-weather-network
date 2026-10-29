@@ -1,3 +1,4 @@
+import { startPublicationAttempt } from './publication-attempt.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scrape } from './browser.mjs';
@@ -42,20 +43,25 @@ const progress = setInterval(
     ),
   15000,
 );
+let attempt;
 try {
+  attempt = await startPublicationAttempt(dirname(output), started);
   if (!args.includes('--local') && !process.env.BLOB_READ_WRITE_TOKEN)
     throw new Error(
       'Set BLOB_READ_WRITE_TOKEN in private configuration, or use --local',
     );
-  const feed = await scrape({ log: (message) => say('🌐', message) });
+  const feed = await scrape({ diagnostics: attempt.diagnostics, onMetadata: ({generatedAt,navigationMs,extractionMs}) => Object.assign(attempt.record,{generatedAt,navigationMs,extractionMs}), log: (message) => say('🌐', message) });
   say(
     '📦',
     `Validated ${feed.hourly.length} hours; ${args.includes('--local') ? 'saving locally' : 'publishing to Vercel Blob'}`,
   );
+  attempt.record.publicationAttempted = !args.includes('--local');
+  attempt.diagnostics.stage = 'publication';
   const blob = await publishAndSave(feed, output, {
     token: process.env.BLOB_READ_WRITE_TOKEN,
     local: args.includes('--local'),
   });
+  await attempt.complete();
   say('✅', `Saved ${feed.hourly.length} hours to ${output}`);
   say(
     '🎨',
@@ -64,6 +70,10 @@ try {
   if (blob)
     say('☁️', `Published ${blob.url} (cache propagation up to 60 seconds)`);
 } catch (error) {
+  if (attempt) {
+    try {say('📝', `Failure postmortem: ${await attempt.fail(error)}`);}
+    catch (reportError) {say('❌', `Could not save failure postmortem: ${reportError.message}; preserve publication-pending.json`);}
+  }
   say(
     '❌',
     `${error.message}. Previous local output was preserved unless publication already succeeded.`,
